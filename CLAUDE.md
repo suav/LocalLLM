@@ -57,13 +57,24 @@ GIT_SSH_COMMAND="ssh -i ~/.ssh/id_ed25519_secondary -o IdentitiesOnly=yes" git p
 
 ## Docker Services
 
-### Stable Diffusion Setup
+### Stable Diffusion Setup (Real AI Model)
 ```bash
-# Start Stable Diffusion WebUI
+# Start Real Stable Diffusion with PyTorch + Diffusers
 docker-compose -f docker-compose.sd.yml up -d
 
-# Pull latest Stable Diffusion image
-docker pull universonic/stable-diffusion-webui:latest
+# Monitor model loading progress (first time: 5-10 minutes)
+docker logs sd-webui -f
+
+# Test API readiness
+curl http://localhost:7860/sdapi/v1/progress
+```
+
+### Production Deployment
+```bash
+# Quick deployment script for EC2 or local production
+./deploy.sh
+
+# Manual deployment steps in DEPLOY.md
 ```
 
 ## Project Structure
@@ -74,10 +85,16 @@ docker pull universonic/stable-diffusion-webui:latest
 - `src/routes/conversations.js` - Chat conversation management
 - `src/llm/index.js` - Ollama LLM integration
 - `public/chat.html` - Main chat interface with image preview grid
-- `docker-compose.sd.yml` - Stable Diffusion service configuration
+- `docker-compose.sd.yml` - Real Stable Diffusion v1.5 configuration
+- `real_sd_server.py` - Actual AI image generation server (PyTorch + Diffusers)
+- `deploy.sh` - Production deployment script
+- `DEPLOY.md` - Complete deployment guide
 
 ### Recent Enhancements
+- **Real AI Image Generation**: Stable Diffusion v1.5 with PyTorch and Diffusers
+- **True Image Model**: CPU-based real AI (not placeholders) - 3-4 minutes per generation
 - File metadata display (timestamps, size, type)
 - 2-column image preview grid with hover overlays
 - Prompt-based filename generation for images
-- Improved UI/UX for file management
+- Production-ready deployment configuration
+- EC2 deployment documentation and scripts

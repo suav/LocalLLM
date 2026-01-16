@@ -328,17 +328,10 @@ async function generateWithStableDiffusion(prompt, options = {}) {
     
     const payload = {
       prompt: enhancedPrompt,
-      negative_prompt: "blurry, low quality, distorted, ugly, bad anatomy",
       width: width,
       height: height,
       steps: steps,
-      cfg_scale: guidanceScale,
-      sampler_index: "DPM++ 2M Karras",
-      seed: -1,
-      batch_size: 1,
-      n_iter: 1,
-      restore_faces: false,
-      tiling: false
+      cfg_scale: guidanceScale
     };
     
     console.log(`Generating with SD API: ${enhancedPrompt}`);

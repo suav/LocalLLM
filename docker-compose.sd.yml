@@ -2,31 +2,32 @@ version: '3.8'
 
 services:
   stable-diffusion:
-    image: universonic/stable-diffusion-webui:latest
+    image: python:3.10-slim
     container_name: sd-webui
     ports:
       - "7860:7860"
     volumes:
-      # Models storage (will persist between restarts)
-      - ./sd-data/models:/app/stable-diffusion-webui/models/Stable-diffusion
-      # Outputs storage
-      - ./sd-data/outputs:/app/stable-diffusion-webui/outputs
-      # Extensions storage  
-      - ./sd-data/extensions:/app/stable-diffusion-webui/extensions
-      # Config storage
-      - ./sd-data/config:/app/stable-diffusion-webui/config
+      - ./sd-data/models:/app/models
+      - ./sd-data/outputs:/app/outputs  
+      - ./real_sd_server.py:/app/server.py
+    working_dir: /app
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
     environment:
-      # Enable API access
-      - CLI_ARGS=--api --listen --port 7860 --allow-code --skip-torch-cuda-test --use-cpu all --precision full --no-half
-      # Gradio settings
-      - GRADIO_SERVER_NAME=0.0.0.0
-      - GRADIO_SERVER_PORT=7860
+      - HF_DATASETS_OFFLINE=0
+      - TRANSFORMERS_OFFLINE=0
+      - HF_HUB_OFFLINE=0
+      - TORCH_HOME=/app/models/torch
+    command: >
+      bash -c "
+      echo 'Installing dependencies...' &&
+      pip install fastapi uvicorn pillow pydantic &&
+      echo 'Installing PyTorch CPU version...' &&
+      pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu &&
+      echo 'Installing diffusers...' &&
+      pip install diffusers transformers accelerate &&
+      echo 'Starting server...' &&
+      python server.py
+      "
     restart: unless-stopped
-    # Uncomment the following lines if you have NVIDIA GPU
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: 1
-    #           capabilities: [gpu]
