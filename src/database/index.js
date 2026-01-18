@@ -12,6 +12,16 @@ function initializeDatabase() {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT UNIQUE NOT NULL,
         password TEXT NOT NULL,
+        user_role TEXT DEFAULT 'employer' CHECK (user_role IN ('super', 'employer')),
+        job_title TEXT,
+        company_name TEXT,
+        job_description TEXT,
+        last_ip TEXT,
+        last_user_agent TEXT,
+        mac_address TEXT,
+        request_count INTEGER DEFAULT 0,
+        last_request_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+        rate_limit_reset DATETIME DEFAULT CURRENT_TIMESTAMP,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )`);
       
@@ -32,6 +42,29 @@ function initializeDatabase() {
         model TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (conversation_id) REFERENCES conversations (id) ON DELETE CASCADE
+      )`);
+      
+      db.run(`CREATE TABLE IF NOT EXISTS user_sessions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        session_token TEXT UNIQUE NOT NULL,
+        ip_address TEXT NOT NULL,
+        user_agent TEXT,
+        mac_address TEXT,
+        login_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+        last_activity DATETIME DEFAULT CURRENT_TIMESTAMP,
+        is_active BOOLEAN DEFAULT 1,
+        FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+      )`);
+      
+      db.run(`CREATE TABLE IF NOT EXISTS rate_limit_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        ip_address TEXT NOT NULL,
+        endpoint TEXT NOT NULL,
+        request_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+        was_blocked BOOLEAN DEFAULT 0,
+        FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
       )`, (err) => {
         if (err) {
           reject(err);
@@ -55,16 +88,75 @@ const users = {
     });
   },
   
-  create(username, hashedPassword) {
+  findById(userId) {
     return new Promise((resolve, reject) => {
+      db.get('SELECT * FROM users WHERE id = ?', [userId], (err, row) => {
+        if (err) reject(err);
+        else resolve(row);
+      });
+    });
+  },
+  
+  create(username, hashedPassword, userRole = 'employer', jobData = {}) {
+    return new Promise((resolve, reject) => {
+      const { jobTitle, companyName, jobDescription } = jobData;
       db.run(
-        'INSERT INTO users (username, password) VALUES (?, ?)',
-        [username, hashedPassword],
+        `INSERT INTO users (username, password, user_role, job_title, company_name, job_description) 
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [username, hashedPassword, userRole, jobTitle, companyName, jobDescription],
         function(err) {
           if (err) reject(err);
           else resolve(this.lastID);
         }
       );
+    });
+  },
+  
+  updateActivity(userId, ipAddress, userAgent, macAddress = null) {
+    return new Promise((resolve, reject) => {
+      db.run(
+        `UPDATE users SET 
+         last_ip = ?, 
+         last_user_agent = ?, 
+         mac_address = COALESCE(?, mac_address),
+         last_request_time = CURRENT_TIMESTAMP,
+         request_count = request_count + 1 
+         WHERE id = ?`,
+        [ipAddress, userAgent, macAddress, userId],
+        function(err) {
+          if (err) reject(err);
+          else resolve(this.changes > 0);
+        }
+      );
+    });
+  },
+  
+  updateRateLimit(userId) {
+    return new Promise((resolve, reject) => {
+      db.run(
+        `UPDATE users SET 
+         rate_limit_reset = CURRENT_TIMESTAMP 
+         WHERE id = ?`,
+        [userId],
+        function(err) {
+          if (err) reject(err);
+          else resolve(this.changes > 0);
+        }
+      );
+    });
+  },
+  
+  getStats(userId = null) {
+    return new Promise((resolve, reject) => {
+      const query = userId ? 
+        'SELECT * FROM users WHERE id = ?' : 
+        'SELECT id, username, user_role, job_title, company_name, request_count, last_request_time, created_at FROM users';
+      const params = userId ? [userId] : [];
+      
+      db.all(query, params, (err, rows) => {
+        if (err) reject(err);
+        else resolve(userId ? rows[0] : rows);
+      });
     });
   }
 };
@@ -220,11 +312,139 @@ function closeDatabase() {
   });
 }
 
+const sessions = {
+  create(userId, sessionToken, ipAddress, userAgent, macAddress = null) {
+    return new Promise((resolve, reject) => {
+      db.run(
+        `INSERT INTO user_sessions (user_id, session_token, ip_address, user_agent, mac_address)
+         VALUES (?, ?, ?, ?, ?)`,
+        [userId, sessionToken, ipAddress, userAgent, macAddress],
+        function(err) {
+          if (err) reject(err);
+          else resolve(this.lastID);
+        }
+      );
+    });
+  },
+  
+  findByToken(sessionToken) {
+    return new Promise((resolve, reject) => {
+      db.get(
+        `SELECT s.*, u.username, u.user_role, u.job_title, u.company_name 
+         FROM user_sessions s 
+         JOIN users u ON s.user_id = u.id 
+         WHERE s.session_token = ? AND s.is_active = 1`,
+        [sessionToken],
+        (err, row) => {
+          if (err) reject(err);
+          else resolve(row);
+        }
+      );
+    });
+  },
+  
+  updateActivity(sessionToken) {
+    return new Promise((resolve, reject) => {
+      db.run(
+        'UPDATE user_sessions SET last_activity = CURRENT_TIMESTAMP WHERE session_token = ?',
+        [sessionToken],
+        function(err) {
+          if (err) reject(err);
+          else resolve(this.changes > 0);
+        }
+      );
+    });
+  },
+  
+  deactivate(sessionToken) {
+    return new Promise((resolve, reject) => {
+      db.run(
+        'UPDATE user_sessions SET is_active = 0 WHERE session_token = ?',
+        [sessionToken],
+        function(err) {
+          if (err) reject(err);
+          else resolve(this.changes > 0);
+        }
+      );
+    });
+  },
+  
+  cleanupExpired(hours = 24) {
+    return new Promise((resolve, reject) => {
+      db.run(
+        `UPDATE user_sessions SET is_active = 0 
+         WHERE last_activity < datetime('now', '-' || ? || ' hours')`,
+        [hours],
+        function(err) {
+          if (err) reject(err);
+          else resolve(this.changes);
+        }
+      );
+    });
+  }
+};
+
+const rateLimiter = {
+  log(userId, ipAddress, endpoint, wasBlocked = false) {
+    return new Promise((resolve, reject) => {
+      db.run(
+        `INSERT INTO rate_limit_log (user_id, ip_address, endpoint, was_blocked)
+         VALUES (?, ?, ?, ?)`,
+        [userId, ipAddress, endpoint, wasBlocked ? 1 : 0],
+        function(err) {
+          if (err) reject(err);
+          else resolve(this.lastID);
+        }
+      );
+    });
+  },
+  
+  getRequestCount(userId, minutes = 60) {
+    return new Promise((resolve, reject) => {
+      db.get(
+        `SELECT COUNT(*) as count 
+         FROM rate_limit_log 
+         WHERE user_id = ? AND request_time > datetime('now', '-' || ? || ' minutes')`,
+        [userId, minutes],
+        (err, row) => {
+          if (err) reject(err);
+          else resolve(row.count);
+        }
+      );
+    });
+  },
+  
+  getStats(userId = null, hours = 24) {
+    return new Promise((resolve, reject) => {
+      const query = userId ? 
+        `SELECT endpoint, COUNT(*) as requests, SUM(was_blocked) as blocked
+         FROM rate_limit_log 
+         WHERE user_id = ? AND request_time > datetime('now', '-' || ? || ' hours')
+         GROUP BY endpoint` :
+        `SELECT u.username, u.user_role, r.endpoint, COUNT(*) as requests, SUM(r.was_blocked) as blocked
+         FROM rate_limit_log r
+         JOIN users u ON r.user_id = u.id
+         WHERE r.request_time > datetime('now', '-' || ? || ' hours')
+         GROUP BY r.user_id, r.endpoint
+         ORDER BY requests DESC`;
+      
+      const params = userId ? [userId, hours] : [hours];
+      
+      db.all(query, params, (err, rows) => {
+        if (err) reject(err);
+        else resolve(rows);
+      });
+    });
+  }
+};
+
 module.exports = {
   db,
   initializeDatabase,
   users,
   conversations,
   messages,
+  sessions,
+  rateLimiter,
   closeDatabase
 };

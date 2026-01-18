@@ -6,9 +6,11 @@ const path = require('path');
 
 const config = require('./src/config');
 const { initializeDatabase, closeDatabase } = require('./src/database');
-const { requireAuth, loginUser, logoutUser } = require('./src/auth');
+const { requireAuth, requireRole, loginUser, logoutUser, getUserStats, cleanupExpiredSessions } = require('./src/auth');
 const { handleChatStream, handleChat } = require('./src/llm');
 const { processMessageContent } = require('./src/content');
+const { rateLimitMiddleware, rateLimitStatsMiddleware, trackSessionActivity } = require('./src/middleware/rateLimiter');
+const { promptModifierMiddleware } = require('./src/middleware/promptModifier');
 const conversationRoutes = require('./src/routes/conversations');
 const fileRoutes = require('./src/routes/files');
 
@@ -47,10 +49,20 @@ initializeDatabase().catch(error => {
   process.exit(1);
 });
 
+// Clean up expired sessions on startup
+setTimeout(() => {
+  cleanupExpiredSessions(24).catch(console.error);
+}, 10000);
+
+// Custom middleware
+app.use(trackSessionActivity);
+app.use(rateLimitMiddleware);
+app.use(promptModifierMiddleware);
+
 // Serve static files
 app.use(express.static('public'));
 
-// Routes
+// Routes with role-based access
 app.use('/api', requireAuth, conversationRoutes);
 app.use('/api', requireAuth, fileRoutes);
 
@@ -74,12 +86,23 @@ app.get('/login', (req, res) => {
 app.post('/login', async (req, res) => {
   const { username, password } = req.body;
   
-  const result = await loginUser(username, password);
+  const result = await loginUser(username, password, req);
   
   if (result.success) {
     req.session.userId = result.user.id;
     req.session.username = result.user.username;
-    res.json({ success: true, redirect: '/chat' });
+    req.session.userRole = result.user.user_role;
+    req.session.sessionToken = result.sessionToken;
+    res.json({ 
+      success: true, 
+      redirect: '/chat',
+      user: {
+        username: result.user.username,
+        role: result.user.user_role,
+        jobTitle: result.user.job_title,
+        companyName: result.user.company_name
+      }
+    });
   } else {
     res.status(401).json({ error: result.error });
   }
@@ -92,9 +115,38 @@ app.get('/chat', requireAuth, (req, res) => {
 // API endpoint to get current user info
 app.get('/api/user', requireAuth, (req, res) => {
   res.json({
-    username: req.session.username,
-    userId: req.session.userId
+    username: req.user.username,
+    userId: req.user.id,
+    role: req.user.user_role,
+    jobTitle: req.user.job_title,
+    companyName: req.user.company_name
   });
+});
+
+// Admin endpoints
+app.get('/api/admin/users', requireAuth, requireRole(['super']), async (req, res) => {
+  try {
+    const users = await getUserStats();
+    res.json({ users });
+  } catch (error) {
+    console.error('Error fetching user stats:', error);
+    res.status(500).json({ error: 'Failed to fetch user statistics' });
+  }
+});
+
+app.get('/api/admin/rate-limits', requireAuth, requireRole(['super']), rateLimitStatsMiddleware, (req, res) => {
+  res.json({ stats: req.rateLimitStats });
+});
+
+// Logout endpoint
+app.post('/logout', requireAuth, async (req, res) => {
+  try {
+    await logoutUser(req);
+    res.json({ success: true, message: 'Logged out successfully' });
+  } catch (error) {
+    console.error('Logout error:', error);
+    res.status(500).json({ error: 'Failed to logout properly' });
+  }
 });
 
 // System status endpoint
