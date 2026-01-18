@@ -14,7 +14,7 @@ module.exports = {
   // LLM configuration
   OLLAMA_HOST: process.env.OLLAMA_HOST || 'http://localhost:11434',
   LLM_MODEL: process.env.LLM_MODEL || 'llama3.2:3b',
-  MAX_TOKENS: parseInt(process.env.MAX_TOKENS || '500'),
+  MAX_TOKENS: parseInt(process.env.MAX_TOKENS || '2048'),
   TEMPERATURE: parseFloat(process.env.TEMPERATURE || '0.7'),
   CONTEXT_WINDOW_MESSAGES: parseInt(process.env.CONTEXT_WINDOW_MESSAGES || '20'),
   

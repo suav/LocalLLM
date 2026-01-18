@@ -12,11 +12,14 @@
 # Start the main application
 node server.js
 
-# Start Stable Diffusion service (takes ~5 minutes first time)
+# Start Stable Diffusion service (auto-detects GPU/CPU)
 docker-compose -f docker-compose.sd.yml up -d
 
 # Monitor SD model loading (first time only)
 docker logs sd-webui -f
+
+# Optional: Configure Ollama for GPU acceleration
+./configure-ollama-gpu.sh
 ```
 
 ## EC2 Production Deployment
@@ -131,9 +134,12 @@ sudo systemctl status chatgptay
 - **Network**: Stable internet for model downloads
 
 ### Performance Notes
-- **Stable Diffusion**: Takes 3-4 minutes per image on CPU
+- **Stable Diffusion GPU**: 10-30 seconds per image (with NVIDIA GPU)
+- **Stable Diffusion CPU**: 3-4 minutes per image (CPU fallback)
+- **Ollama GPU**: Very fast responses (with NVIDIA GPU)
+- **Ollama CPU**: 2-5 second responses (CPU mode)
 - **First run**: Downloads 4GB+ models (10-15 minutes)
-- **Concurrent users**: 2-3 simultaneous SD generations max
+- **Auto-detection**: System automatically uses best available compute
 
 ## Troubleshooting
 

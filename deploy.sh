@@ -7,6 +7,20 @@ set -e
 
 echo "🚀 Starting ChatGPTay Deployment..."
 
+# Check system capabilities
+echo "🔍 Checking system capabilities..."
+if command -v nvidia-smi > /dev/null 2>&1; then
+    nvidia-smi > /dev/null 2>&1 && HAS_GPU=true || HAS_GPU=false
+else
+    HAS_GPU=false
+fi
+
+if [ "$HAS_GPU" = "true" ]; then
+    echo "⚡ NVIDIA GPU detected - will attempt GPU acceleration"
+else
+    echo "🔧 No GPU detected - using CPU mode (still fast!)"
+fi
+
 # Create required directories
 echo "📁 Creating directories..."
 mkdir -p data/users sd-data/{models,outputs}
@@ -16,12 +30,17 @@ echo "📦 Installing Node.js dependencies..."
 npm install --production
 
 # Start Stable Diffusion service
-echo "🎨 Starting Stable Diffusion service..."
+echo "🎨 Starting adaptive Stable Diffusion service..."
 docker-compose -f docker-compose.sd.yml up -d
 
 # Wait for SD service to start
 echo "⏳ Waiting for Stable Diffusion to initialize..."
 echo "   This may take 5-10 minutes on first run (downloading 4GB+ models)"
+if [ "$HAS_GPU" = "true" ]; then
+    echo "   ⚡ With GPU: Expect ~10-30 seconds per image generation"
+else
+    echo "   🕒 With CPU: Expect ~3-4 minutes per image generation"
+fi
 
 # Monitor SD startup
 timeout=300  # 5 minutes

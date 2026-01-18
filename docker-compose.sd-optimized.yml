@@ -2,8 +2,8 @@ version: '3.8'
 
 services:
   stable-diffusion:
-    image: python:3.10-slim
-    container_name: sd-webui
+    image: stable-diffusion-ready:latest
+    container_name: sd-webui-fast
     ports:
       - "7860:7860"
     volumes:
@@ -23,21 +23,25 @@ services:
     # GPU support - NVIDIA Container Toolkit is now installed!
     deploy:
       resources:
+        limits:
+          memory: 8G
         reservations:
+          memory: 4G
           devices:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
+    # Increase shared memory for large model loading
+    shm_size: '2gb'
+    # Increase ulimits for model loading
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    # Fast startup - no dependency installation needed!
     command: >
       bash -c '
-      echo "🔍 Adaptive GPU/CPU Stable Diffusion server starting..." &&
-      echo "📦 Installing dependencies..." &&
-      pip install fastapi uvicorn pillow pydantic &&
-      echo "⚡ Installing GPU PyTorch (with CPU fallback)..." &&
-      pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121 &&
-      echo "🎨 Installing diffusers and transformers..." &&
-      pip install diffusers transformers accelerate &&
-      echo "🚀 Starting adaptive Stable Diffusion server..." &&
+      echo "🚀 Fast startup with pre-loaded Stable Diffusion image!" &&
+      echo "⚡ All dependencies already installed - starting server directly..." &&
       python server.py
       '
     restart: unless-stopped
